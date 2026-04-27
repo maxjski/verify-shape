@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+import csv, sys, math
+
+N = 30
+SIDE_TOL = 1e-8
+BOUND_TOL = 1e-8
+OVERLAP_TOL = 1e-10
+
+
+def dot(a, b):
+    return a[0] * b[0] + a[1] * b[1]
+
+
+def sub(a, b):
+    return (a[0] - b[0], a[1] - b[1])
+
+
+def d2(a, b):
+    return dot(sub(a, b), sub(a, b))
+
+
+def area(t):
+    a, b, c = t
+    return abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2
+
+
+def load(path):
+    rows = list(csv.reader(open(path)))
+    S = float(rows[0][1])
+
+    header = rows[1]
+    ix = {name: header.index(name) for name in header}
+
+    tris = []
+    ids = []
+
+    for r in rows[2:]:
+        if not r:
+            continue
+        ids.append(r[ix["id"]])
+        tris.append((
+            (float(r[ix["v0_x"]]), float(r[ix["v0_y"]])),
+            (float(r[ix["v1_x"]]), float(r[ix["v1_y"]])),
+            (float(r[ix["v2_x"]]), float(r[ix["v2_y"]])),
+        ))
+
+    return S, ids, tris
+
+
+def axes(t):
+    for i in range(3):
+        a = t[i]
+        b = t[(i + 1) % 3]
+        e = sub(b, a)
+        yield (-e[1], e[0])
+
+
+def project(t, ax):
+    ps = [dot(p, ax) for p in t]
+    return min(ps), max(ps)
+
+
+def overlap_1d(a, b):
+    return min(a[1], b[1]) - max(a[0], b[0])
+
+
+def collide(a, b):
+    # SAT. Touching is OK; positive-area overlap is not.
+    for ax in list(axes(a)) + list(axes(b)):
+        if overlap_1d(project(a, ax), project(b, ax)) <= OVERLAP_TOL:
+            return False
+    return True
+
+
+def point_seg_d2(p, a, b):
+    ab = sub(b, a)
+    t = dot(sub(p, a), ab) / dot(ab, ab)
+    t = max(0, min(1, t))
+    q = (a[0] + t * ab[0], a[1] + t * ab[1])
+    return d2(p, q)
+
+
+def tri_d2(a, b):
+    best = 1e100
+
+    for p in a:
+        for i in range(3):
+            best = min(best, point_seg_d2(p, b[i], b[(i + 1) % 3]))
+
+    for p in b:
+        for i in range(3):
+            best = min(best, point_seg_d2(p, a[i], a[(i + 1) % 3]))
+
+    return best
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("usage: python verify.py candidate.csv")
+        sys.exit(2)
+
+    S, ids, tris = load(sys.argv[1])
+
+    print("side =", S)
+    print("triangles =", len(tris))
+
+    ok = True
+    max_side_err = 0
+    max_area_err = 0
+    min_margin = 1e100
+    closest = (1e100, None, None)
+    overlaps = []
+
+    if len(tris) != N:
+        print("bad count")
+        ok = False
+
+    for k, t in enumerate(tris):
+        sides = [d2(t[0], t[1]), d2(t[1], t[2]), d2(t[2], t[0])]
+        side_err = max(abs(x - 1) for x in sides)
+        area_err = abs(area(t) - math.sqrt(3) / 4)
+
+        max_side_err = max(max_side_err, side_err)
+        max_area_err = max(max_area_err, area_err)
+
+        if side_err > SIDE_TOL:
+            print("bad side lengths:", ids[k], sides)
+            ok = False
+
+        for p in t:
+            margin = min(p[0], p[1], S - p[0], S - p[1])
+            min_margin = min(min_margin, margin)
+
+            if margin < -BOUND_TOL:
+                print("outside square:", ids[k], p)
+                ok = False
+
+    for i in range(len(tris)):
+        for j in range(i + 1, len(tris)):
+            if collide(tris[i], tris[j]):
+                overlaps.append((ids[i], ids[j]))
+                ok = False
+
+            gap2 = tri_d2(tris[i], tris[j])
+            if gap2 < closest[0]:
+                closest = (gap2, ids[i], ids[j])
+
+    print("max side error =", max_side_err)
+    print("max area error =", max_area_err)
+    print("min boundary margin =", min_margin)
+    print("closest gap =", math.sqrt(closest[0]), "between", closest[1], closest[2])
+    print("overlaps =", len(overlaps))
+
+    for a, b in overlaps:
+        print("overlap:", a, b)
+
+    print("PASS" if ok else "FAIL")
+
+main()
